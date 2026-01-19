@@ -16,6 +16,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv() # .env에 있는 환경 변수를 읽어옴 
 
+st.set_page_config(page_title="주식 분석 대시보드", page_icon="📊", layout="wide")
 st.set_page_config(layout="wide")
 
 my_name = os.getenv("MY_NAME")
