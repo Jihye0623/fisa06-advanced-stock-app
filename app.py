@@ -8,14 +8,34 @@ from io import BytesIO
 import streamlit as st
 import pandas as pd
 import FinanceDataReader as fdr
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
 import koreanize_matplotlib
 import os
 from dotenv import load_dotenv
 load_dotenv() # .env에 있는 환경 변수를 읽어옴 
 
+st.set_page_config(layout="wide")
+
 my_name = os.getenv("MY_NAME")
-st.header(my_name)
+
+# --- 사이드바 설정 ---
+with st.sidebar:
+    st.header("📊 주식 분석 대시보드")
+    my_name = os.getenv("MY_NAME", "Guest") # 환경변수 없으면 Guest
+    st.write(f"환영합니다, **{my_name}**님!")
+    
+    company_name = st.text_input('조회할 회사를 입력하세요')
+
+    today = datetime.date.today()
+    last_year = today - datetime.timedelta(days=365)
+    selected_dates = st.date_input(
+        '날짜를 입력하세요 (시작일 - 종료일)',
+        value=[last_year, today]  
+    )
+    
+    confirm_btn = st.button(label='조회하기')
 
 def get_krx_company_list() -> pd.DataFrame:
     try:
@@ -45,17 +65,6 @@ def get_stock_code_by_company(company_name: str) -> str:
         raise ValueError(f"'{company_name}'을 찾을 수 없습니다. 종목코드 6자리를 직접 입력해보세요.")
 
 
-company_name = st.sidebar.text_input('조회할 회사를 입력하세요')
-
-today = datetime.date.today()
-last_year = today - datetime.timedelta(days=365)
-selected_dates = st.sidebar.date_input(
-    '날짜를 입력하세요 (시작일 - 종료일)',
-    value=[last_year, today]  
-)
-
-confirm_btn = st.sidebar.button(label='조회하기')
-
 # --- 메인 로직 ---
 if confirm_btn:
     if not company_name:
@@ -74,24 +83,76 @@ if confirm_btn:
             if price_df.empty:
                 st.info("해당 기간의 주가 데이터가 없습니다.")
             else:
-                st.subheader(f"[{company_name}] 주가 데이터")
-                st.dataframe(price_df.tail(10), width="stretch")
+                # 1. 이동평균선 계산 (Feature Engineering)
+                price_df['MA5'] = price_df['Close'].rolling(window=5).mean()
+                price_df['MA20'] = price_df['Close'].rolling(window=20).mean()
 
-                # Matplotlib 시각화
-                fig, ax = plt.subplots(figsize=(12, 5))
-                price_df['Close'].plot(ax=ax, grid=True, color='red')
-                ax.set_title(f"{company_name} 종가 추이", fontsize=15)
-                st.pyplot(fig)
+                # 2. 주요 지표 표시 (Metric)
+                st.title(f"📈 {company_name} ({stock_code})")
+                
+                last_close = price_df['Close'].iloc[-1]
+                start_close = price_df['Close'].iloc[0]
+                change = last_close - start_close
+                pct_change = (change / start_close) * 100
+                max_price = price_df['High'].max()
+                min_price = price_df['Low'].min()
 
-                # 엑셀 다운로드 기능
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    price_df.to_excel(writer, index=True, sheet_name='Sheet1')
-                st.download_button(
-                    label="📥 엑셀 파일 다운로드",
-                    data=output.getvalue(),
-                    file_name=f"{company_name}_주가.xlsx",
-                    mime="application/vnd.ms-excel"
-                )
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("현재 주가 (종가)", f"{last_close:,.0f}원", f"{pct_change:.2f}%")
+                col2.metric("기간 내 변동", f"{change:,.0f}원")
+                col3.metric("최고가", f"{max_price:,.0f}원")
+                col4.metric("최저가", f"{min_price:,.0f}원")
+
+                st.divider() # 구분선
+
+                # 3. 탭 구성
+                tab1, tab2 = st.tabs(["📈 차트 분석", "📋 데이터 원본"])
+
+                with tab1:
+                    # --- Plotly 차트 그리기 ---
+                    # 캔들스틱(위) + 거래량(아래) 구조 잡기
+                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                                        vertical_spacing=0.05, 
+                                        row_heights=[0.7, 0.3],
+                                        subplot_titles=('주가 추이 & 이동평균선', '거래량'))
+
+                    # (1) 캔들스틱 차트
+                    fig.add_trace(go.Candlestick(x=price_df.index,
+                                    open=price_df['Open'], high=price_df['High'],
+                                    low=price_df['Low'], close=price_df['Close'],
+                                    name='주가'), row=1, col=1)
+
+                    # (2) 이동평균선 추가
+                    fig.add_trace(go.Scatter(x=price_df.index, y=price_df['MA5'], 
+                                             opacity=0.7, line=dict(color='blue', width=1), name='5일 이동평균'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=price_df.index, y=price_df['MA20'], 
+                                             opacity=0.7, line=dict(color='orange', width=1), name='20일 이동평균'), row=1, col=1)
+
+                    # (3) 거래량 바 차트
+                    colors = ['red' if row['Open'] - row['Close'] >= 0 else 'blue' for index, row in price_df.iterrows()]
+                    fig.add_trace(go.Bar(x=price_df.index, y=price_df['Volume'], 
+                                         marker_color=colors, name='거래량'), row=2, col=1)
+
+                    # 레이아웃 다듬기
+                    fig.update_layout(title=f'{company_name} 주가 분석', xaxis_rangeslider_visible=False, height=600)
+                    
+                    # Streamlit에 표시
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with tab2:
+                    st.dataframe(price_df.sort_index(ascending=False), use_container_width=True)
+                    
+                    # 엑셀 다운로드
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        price_df.to_excel(writer, index=True, sheet_name='Sheet1')
+                    
+                    st.download_button(
+                        label="📥 엑셀 파일 다운로드",
+                        data=output.getvalue(),
+                        file_name=f"{company_name}_{today}.xlsx",
+                        mime="application/vnd.ms-excel"
+                    )
+
         except Exception as e:
             st.error(f"오류가 발생했습니다: {e}")
