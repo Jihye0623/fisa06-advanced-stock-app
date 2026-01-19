@@ -52,14 +52,13 @@ def get_news_data(company_name):
         soup = BeautifulSoup(resp.text, "xml")
         
         news_list = []
-        items = soup.select("item") # XML의 <item> 태그가 기사 하나입니다.
+        items = soup.select("item") 
         
         for item in items:
             title = item.title.text
             link = item.link.text
-            pub_date = item.pubDate.text # (선택사항) 날짜도 가져올 수 있음
+            pub_date = item.pubDate.text
             
-            # 워드클라우드를 위해 제목만 잘 수집하면 됩니다.
             news_list.append({'title': title, 'link': link})
             
         return news_list
@@ -96,7 +95,7 @@ if st.button("뉴스 분석하기 🔍", use_container_width=True):
                     # 2. 워드클라우드 생성
                     font_path = get_font_path()
                     
-                    # 불용어(제외할 단어) 설정 - 필요하면 추가하세요
+                    # 불용어(제외할 단어) 설정 
                     stopwords = {'속보', '특징주', '종목', '분기', '실적', '발표', '공시'}
                     
                     wc = WordCloud(
